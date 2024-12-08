@@ -139,6 +139,14 @@
         .toggle-label {
             color: var(--text-color);
             font-size: 0.9rem;
+            opacity: 0.5;
+            transition: opacity 0.3s ease, font-weight 0.3s ease;
+        }
+
+        .toggle-label.active {
+            opacity: 1;
+            font-weight: bold;
+            color: var(--primary-color);
         }
 
         .toggle-switch {
@@ -212,12 +220,12 @@
         </select>
         <br>
         <div class="toggle-container">
-            <span class="toggle-label">Simple</span>
+            <span class="toggle-label active" id="simpleLabel">Simple</span>
             <label class="toggle-switch">
                 <input type="checkbox" id="layoutToggle" checked>
                 <span class="toggle-slider"></span>
             </label>
-            <span class="toggle-label">Book</span>
+            <span class="toggle-label" id="bookLabel">Book</span>
         </div>
         <button id="submitBtn">Process PDF</button>
     </div>
@@ -385,6 +393,28 @@
 
             fileLabel.textContent = 'Selected file:';
             fileNameSpan.textContent = fileName;
+        });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const layoutToggle = document.getElementById('layoutToggle');
+            const simpleLabel = document.getElementById('simpleLabel');
+            const bookLabel = document.getElementById('bookLabel');
+
+            function updateLabels() {
+                if (layoutToggle.checked) {
+                    simpleLabel.classList.remove('active');
+                    bookLabel.classList.add('active');
+                } else {
+                    simpleLabel.classList.add('active');
+                    bookLabel.classList.remove('active');
+                }
+            }
+
+            // Initial setup
+            updateLabels();
+
+            // Add event listener for toggle changes
+            layoutToggle.addEventListener('change', updateLabels);
         });
     </script>
 </body>
