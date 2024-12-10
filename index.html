@@ -130,6 +130,12 @@
             transform: scale(0.98);
         }
 
+        #submitBtn:disabled {
+            background-color: #ccc;
+            color: #666;
+            cursor: not-allowed;
+        }
+
         .toggle-container {
             display: flex;
             align-items: center;
@@ -251,7 +257,7 @@
             </label>
             <span class="toggle-label" id="bookLabel">Book</span>
         </div>
-        <button id="submitBtn">Process PDF</button>
+        <button id="submitBtn" disabled>Process PDF</button>
         <canvas id="previewCanvas" style="display:none;"></canvas>
     </div>
 
@@ -462,6 +468,8 @@
 
             fileLabel.textContent = 'Selected file:';
             fileNameSpan.textContent = fileName;
+
+            document.getElementById('submitBtn').disabled = false;
         });
 
         document.addEventListener('DOMContentLoaded', () => {
