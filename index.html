@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Screen to Paper</title>
     <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js"></script>
     <style>
         :root {
             --primary-color: #3498db;
@@ -197,6 +199,22 @@
             opacity: 0.7;
         }
 
+        .reduce-gaps-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 1rem;
+            gap: 10px;
+        }
+
+        .reduce-gaps-container label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            color: var(--text-color);
+            font-size: 0.9rem;
+        }
+
         @media (max-width: 600px) {
             .container {
                 width: 95%;
@@ -219,6 +237,12 @@
             <option value="8">8</option>
         </select>
         <br>
+        <div class="reduce-gaps-container" id="reduceGapsContainer" style="display: none;">
+            <label>
+                <input type="checkbox" id="reduceGapsCheckbox">
+                Reduce gaps
+            </label>
+        </div>
         <div class="toggle-container">
             <span class="toggle-label active" id="simpleLabel">Simple</span>
             <label class="toggle-switch">
@@ -228,18 +252,74 @@
             <span class="toggle-label" id="bookLabel">Book</span>
         </div>
         <button id="submitBtn">Process PDF</button>
+        <canvas id="previewCanvas" style="display:none;"></canvas>
     </div>
 
     <script>
-        async function bookscale(inputPdfBytes, shrink = 2, isBook = true) {
-            const { PDFDocument } = window.PDFLib;
+        const { PDFDocument } = window.PDFLib;
+        const pdfjsLib = window.pdfjsLib;
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+        const previewCanvas = document.getElementById('previewCanvas');
+
+        async function getTextArea(pdfBytes,i) {
+            const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(pdfBytes) }).promise;
+            const page = await pdf.getPage(i+1); // pdfjslib is 1-indexed
+            const pageWidth = page.getViewport({scale: 1}).width;
+            const pageHeight = page.getViewport({scale: 1}).height;
+            const viewport = page.getViewport({scale: 0.1});
+            
+            // Prepare canvas using PDF page dimensions
+            previewCanvas.height = viewport.height;
+            previewCanvas.width = viewport.width;
+            
+            await page.render({canvasContext: previewCanvas.getContext('2d'), viewport: viewport}).promise;
+
+            // Convert canvas to PNG and trigger download
+            const data = previewCanvas.getContext('2d').getImageData(0, 0, previewCanvas.width, previewCanvas.height).data;
+            
+            const findRange=l=>{const m=Math.max.apply(null, l); l.forEach((x,i)=>{l[i]=x/m;});return[(l.findIndex(x=>x>0.05)-0.5)/l.length,(l.findLastIndex(x=>x>0.05)+1+0.5)/l.length]};
+
+            const rowSum = new Array(previewCanvas.height).fill(0);
+            for (let hi = 0; hi < previewCanvas.height; hi += 1) {
+                for (let i = hi*previewCanvas.width*4; i < (hi+1)*previewCanvas.width*4; i += 4) {
+                    rowSum[hi] += (255*3)-(data[i]+data[i+1]+data[i+2]);
+                }
+            }
+            const [y0,y1] = findRange(rowSum).map(x=>x*pageHeight);
+
+            const columnSum = new Array(previewCanvas.width).fill(0);
+            for (let wi = 0; wi < previewCanvas.width; wi += 1) {
+                for (let i = wi*4; i < data.length; i += previewCanvas.width*4) {
+                    columnSum[wi] += (255*3)-(data[i]+data[i+1]+data[i+2]);
+                }
+            }
+            const [x0, x1] = findRange(columnSum).map(x=>x*pageWidth);
+            
+            return [x0, x1, pageHeight-y1, pageHeight-y0]; // y coords reversed because canvas is top down and pdf is bottom up
+        };
+        
+        async function cropPdfPage(page, x0, x1, y0, y1) {
+            const { width, height } = page.getSize();
+            const newPdfDoc = await PDFDocument.create();
+            const k = Math.max((x1-x0)/width, (y1-y0)/height);
+            const newPage = newPdfDoc.addPage([width*k, height*k]);
+            const embeddedPage = await newPdfDoc.embedPage(page);
+            newPage.drawPage(embeddedPage, {
+                x: (width*k-(x1-x0))/(width-(x1-x0))*x0-x0, // Negative to shift the content left
+                y: (height*k-(y1-y0))/(height-(y1-y0))*y0-y0, // Negative to shift the content down
+                width: width, // Keep the original width
+                height: height // Keep the original height
+            });
+            await newPdfDoc.save();
+            return newPage;
+        }
+
+        async function bookscale(inputPdfBytes, shrink = 2, isBook = true, reduceGaps = false) {
             const inputPdf = await PDFDocument.load(inputPdfBytes);
             const outputPdf = await PDFDocument.create();
-
             const inpages = inputPdf.getPages();
-            const firstPage = inpages[0];
-            const width = firstPage.getWidth();
-            const height = firstPage.getHeight();
+            const {width, height} = inpages[0].getSize();
             const N = inpages.length;
 
             const nw = 595.28;  // A4 width in points
@@ -255,20 +335,11 @@
             if (shrink === 2) {
                 indicesFunc = (i) => [Ne-1-i, i];
                 transformFunc = (i) => {
-                    const rotation = i % 2 === 0 ? -90 : 90;
-                    const scaleX = (nh / 2) / width;
-                    const scaleY = nw / height;
                     const offsets = [
                         [[0,   1], [0, 0.5]],
                         [[1, 0.5], [1, 0  ]]
                     ][i%2];
-                    return offsets.map(([x, y]) => ({ 
-                        rotation, 
-                        scaleX, 
-                        scaleY, 
-                        offsetX: x, 
-                        offsetY: y 
-                    }));
+                    return offsets.map(([x,y]) => ({rotation: i%2===0?-90:90, subwidth: nh/2, subheight: nw, offsetX: x, offsetY: y }));
                 };
             }
 
@@ -279,11 +350,9 @@
                     return l;
                 };
                 transformFunc = (i) => {
-                    const scaleX = nw / width / 2;
-                    const scaleY = nh / height / 2;
                     const offsetX = [0, 0.5, 0, 0.5];
                     const offsetY = [0.5, 0.5, 0, 0];
-                    return offsetX.map((x, i) => ({ rotation: 0, scaleX, scaleY, offsetX: x, offsetY: offsetY[i] }));
+                    return offsetX.map((x, i) => ({ rotation: 0, subwidth: nw/2, subheight: nh/2, offsetX: x, offsetY: offsetY[i] }));
                 };
             }
 
@@ -294,22 +363,13 @@
                     return l;
                 };
                 transformFunc = (i) => {
-                    const rotation = i % 2 === 0 ? -90 : 90;
-                    const scaleX = (nh / 4) / width;
-                    const scaleY = (nw / 2) / height;
                     const offsetX = i % 2 === 0 
                         ? [0.5, 0, 0.5, 0, 0.5, 0, 0.5, 0]
                         : [1, 0.5, 1, 0.5, 1, 0.5, 1, 0.5];
                     const offsetY = i % 2 === 0 
                         ? [1, 1, 0.75, 0.75, 0.5, 0.5, 0.25, 0.25]
                         : [0.75, 0.75, 0.5, 0.5, 0.25, 0.25, 0, 0];
-                    return Array.from({length: 8}, (_, j) => ({ 
-                        rotation, 
-                        scaleX, 
-                        scaleY, 
-                        offsetX: offsetX[j], 
-                        offsetY: offsetY[j] 
-                    }));
+                    return Array.from({length: 8}, (_, j) => ({ rotation: i%2===0?-90:90, subwidth: nh/4, subheight: nw/2, offsetX: offsetX[j], offsetY: offsetY[j] }));
                 };
             }
 
@@ -325,18 +385,21 @@
                 const transforms = transformFunc(i);
 
                 for (let j = 0; j < indices.length; j++) {
-                    const page = getPage(indices[j]);
+                    let page = getPage(indices[j]);
+
+                    if (reduceGaps && page) {
+                        const [x0,x1,y0,y1] = await getTextArea(inputPdfBytes, indices[j]);
+                        page = await cropPdfPage(page, x0, x1, y0, y1);
+                    }
 
                     if (page) {
-                        const { rotation, scaleX, scaleY, offsetX, offsetY } = transforms[j];
-                        
+                        const { rotation, subwidth, subheight, offsetX, offsetY } = transforms[j];
                         const embeddedPage = await outputPdf.embedPage(page);
-
                         newPage.drawPage(embeddedPage, {
                             x: offsetX * nw,
                             y: offsetY * nh,
-                            width: width * scaleX,
-                            height: height * scaleY,
+                            width: subwidth,
+                            height: subheight,
                             rotate: PDFLib.degrees(rotation)
                         });
                     }
@@ -346,10 +409,16 @@
             return await outputPdf.save();
         }
 
+        document.getElementById('shrinkFactor').addEventListener('change', (e) => {
+            const reduceGapsContainer = document.getElementById('reduceGapsContainer');
+            reduceGapsContainer.style.display = e.target.value === '8' ? 'flex' : 'none';
+        });
+
         document.getElementById('submitBtn').addEventListener('click', async () => {
             const fileInput = document.getElementById('fileInput');
             const shrinkFactor = document.getElementById('shrinkFactor').value;
             const isBook = document.getElementById('layoutToggle').checked;
+            const reduceGaps = document.getElementById('reduceGapsCheckbox').checked;
 
             if (!fileInput.files.length) {
                 alert('Please select a PDF file');
@@ -362,7 +431,7 @@
             reader.onload = async (e) => {
                 try {
                     const inputPdfBytes = e.target.result;
-                    const processedPdfBytes = await bookscale(inputPdfBytes, parseInt(shrinkFactor), isBook);
+                    const processedPdfBytes = await bookscale(inputPdfBytes, parseInt(shrinkFactor), isBook, reduceGaps);
 
                     const blob = new Blob([processedPdfBytes], { type: 'application/pdf' });
                     const url = URL.createObjectURL(blob);
