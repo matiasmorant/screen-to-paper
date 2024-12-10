@@ -221,6 +221,14 @@
             font-size: 0.9rem;
         }
 
+        #progressContainer {
+            margin-top: 1rem;
+        }
+
+        #progressBar {
+            width: 100%;
+        }
+
         @media (max-width: 600px) {
             .container {
                 width: 95%;
@@ -258,6 +266,9 @@
             <span class="toggle-label" id="bookLabel">Book</span>
         </div>
         <button id="submitBtn" disabled>Process PDF</button>
+        <div id="progressContainer" style="display:none;">
+            <progress id="progressBar" value="0" max="100"></progress>
+        </div>
         <canvas id="previewCanvas" style="display:none;"></canvas>
     </div>
 
@@ -410,6 +421,9 @@
                         });
                     }
                 }
+                const progress = Math.floor((i+1)/nN*100);
+                document.getElementById('progressBar').value = progress;
+                document.getElementById('progressContainer').style.display = 'block';
             }
 
             return await outputPdf.save();
@@ -452,6 +466,7 @@
                     
                     // Clean up the URL object
                     URL.revokeObjectURL(url);
+                    document.getElementById('progressContainer').style.display = 'none';
                 } catch (error) {
                     console.error('Error processing PDF:', error);
                     alert('Error processing PDF');
