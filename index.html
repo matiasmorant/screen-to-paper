@@ -251,10 +251,10 @@
             <option value="8">8</option>
         </select>
         <br>
-        <div class="reduce-gaps-container" id="reduceGapsContainer" style="display: none;">
+        <div class="reduce-gaps-container">
             <label>
                 <input type="checkbox" id="reduceGapsCheckbox">
-                Reduce gaps
+                Reduce margins
             </label>
         </div>
         <div class="toggle-container">
@@ -428,11 +428,6 @@
 
             return await outputPdf.save();
         }
-
-        document.getElementById('shrinkFactor').addEventListener('change', (e) => {
-            const reduceGapsContainer = document.getElementById('reduceGapsContainer');
-            reduceGapsContainer.style.display = e.target.value === '8' ? 'flex' : 'none';
-        });
 
         document.getElementById('submitBtn').addEventListener('click', async () => {
             const fileInput = document.getElementById('fileInput');
