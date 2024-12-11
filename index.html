@@ -270,7 +270,6 @@
         <div id="progressContainer" style="display:none;">
             <progress id="progressBar" value="0" max="100"></progress>
         </div>
-        <canvas id="previewCanvas" style="display:none;"></canvas>
     </div>
 
     <script>
@@ -278,59 +277,86 @@
         const pdfjsLib = window.pdfjsLib;
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 
-        const previewCanvas = document.getElementById('previewCanvas');
-
-        async function getTextArea(pdfBytes,i) {
+        async function getImageData(pdfBytes,i){
             const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(pdfBytes) }).promise;
             const page = await pdf.getPage(i+1); // pdfjslib is 1-indexed
             const pageWidth = page.getViewport({scale: 1}).width;
             const pageHeight = page.getViewport({scale: 1}).height;
             const viewport = page.getViewport({scale: 0.1});
-            
-            // Prepare canvas using PDF page dimensions
-            previewCanvas.height = viewport.height;
+
+            // Create a new canvas element
+            const previewCanvas = document.createElement('canvas');
             previewCanvas.width = viewport.width;
-            
-            await page.render({canvasContext: previewCanvas.getContext('2d'), viewport: viewport}).promise;
+            previewCanvas.height = viewport.height;
+
+            // Prepare the canvas for rendering
+            const context = previewCanvas.getContext('2d');
+
+            // Render the PDF page to the canvas
+            await page.render({ canvasContext: context, viewport: viewport }).promise;
 
             // Convert canvas to PNG and trigger download
-            const data = previewCanvas.getContext('2d').getImageData(0, 0, previewCanvas.width, previewCanvas.height).data;
-            
+            const ret = {
+                data: context.getImageData(0, 0, previewCanvas.width, previewCanvas.height).data,
+                canvaswidth: previewCanvas.width,
+                canvasheight: previewCanvas.height,
+                pageWidth,
+                pageHeight
+            };
+            previewCanvas.remove();
+            return ret;
+
+        }
+
+        async function getTextArea(pdfBytes,i) {
+            const {data, canvaswidth, canvasheight, pageWidth, pageHeight} = await getImageData(pdfBytes,i);
             const findRange=l=>{const m=Math.max.apply(null, l); l.forEach((x,i)=>{l[i]=x/m;});return[(l.findIndex(x=>x>0.05)-0.5)/l.length,(l.findLastIndex(x=>x>0.05)+1+0.5)/l.length]};
 
-            const rowSum = new Array(previewCanvas.height).fill(0);
-            for (let hi = 0; hi < previewCanvas.height; hi += 1) {
-                for (let i = hi*previewCanvas.width*4; i < (hi+1)*previewCanvas.width*4; i += 4) {
+            const rowSum = new Array(canvasheight).fill(0);
+            for (let hi = 0; hi < canvasheight; hi += 1) {
+                for (let i = hi*canvaswidth*4; i < (hi+1)*canvaswidth*4; i += 4) {
                     rowSum[hi] += (255*3)-(data[i]+data[i+1]+data[i+2]);
                 }
             }
             const [y0,y1] = findRange(rowSum).map(x=>x*pageHeight);
 
-            const columnSum = new Array(previewCanvas.width).fill(0);
-            for (let wi = 0; wi < previewCanvas.width; wi += 1) {
-                for (let i = wi*4; i < data.length; i += previewCanvas.width*4) {
+            const columnSum = new Array(canvaswidth).fill(0);
+            for (let wi = 0; wi < canvaswidth; wi += 1) {
+                for (let i = wi*4; i < data.length; i += canvaswidth*4) {
                     columnSum[wi] += (255*3)-(data[i]+data[i+1]+data[i+2]);
                 }
             }
             const [x0, x1] = findRange(columnSum).map(x=>x*pageWidth);
-            
+
             return [x0, x1, pageHeight-y1, pageHeight-y0]; // y coords reversed because canvas is top down and pdf is bottom up
         };
-        
+        async function addPage(pdf, page){
+            const {width, height} = page.getSize();
+            const newPage = pdf.addPage([width, height]);
+            const embeddedPage = await pdf.embedPage(page);
+            newPage.drawPage(embeddedPage, {x: 0, y: 0, width, height});
+        }
+        async function collage(size, pages, ops){
+            const newPdfDoc = await PDFDocument.create();
+            const newPage = newPdfDoc.addPage(size);
+            for (let i = 0; i < pages.length; i += 1) {
+                if (pages[i]) {
+                    const embeddedPage = await newPdfDoc.embedPage(pages[i]);
+                    newPage.drawPage(embeddedPage, ops[i]);
+                }
+            }
+            await newPdfDoc.save();
+            return newPage;
+        }
         async function cropPdfPage(page, x0, x1, y0, y1) {
             const { width, height } = page.getSize();
-            const newPdfDoc = await PDFDocument.create();
             const k = Math.max((x1-x0)/width, (y1-y0)/height);
-            const newPage = newPdfDoc.addPage([width*k, height*k]);
-            const embeddedPage = await newPdfDoc.embedPage(page);
-            newPage.drawPage(embeddedPage, {
+            return collage([width*k, height*k], [page], [{
                 x: (width*k-(x1-x0))/(width-(x1-x0))*x0-x0, // Negative to shift the content left
                 y: (height*k-(y1-y0))/(height-(y1-y0))*y0-y0, // Negative to shift the content down
                 width: width, // Keep the original width
                 height: height // Keep the original height
-            });
-            await newPdfDoc.save();
-            return newPage;
+            }]);
         }
 
         async function bookscale(inputPdfBytes, shrink = 2, isBook = true, reduceGaps = false) {
@@ -381,10 +407,10 @@
                     return l;
                 };
                 transformFunc = (i) => {
-                    const offsetX = i % 2 === 0 
+                    const offsetX = i % 2 === 0
                         ? [0.5, 0, 0.5, 0, 0.5, 0, 0.5, 0]
                         : [1, 0.5, 1, 0.5, 1, 0.5, 1, 0.5];
-                    const offsetY = i % 2 === 0 
+                    const offsetY = i % 2 === 0
                         ? [1, 1, 0.75, 0.75, 0.5, 0.5, 0.25, 0.25]
                         : [0.75, 0.75, 0.5, 0.5, 0.25, 0.25, 0, 0];
                     return Array.from({length: 8}, (_, j) => ({ rotation: i%2===0?-90:90, subwidth: nh/4, subheight: nw/2, offsetX: offsetX[j], offsetY: offsetY[j] }));
@@ -397,31 +423,40 @@
                 transformFunc = (i) => trans0;
             }
 
+            const transform=(i)=>{
+                return transformFunc(i).map(x=>{
+                    const { rotation, subwidth, subheight, offsetX, offsetY }=x;
+                    return{
+                        x: offsetX * nw,
+                        y: offsetY * nh,
+                        width: subwidth,
+                        height: subheight,
+                        rotate: PDFLib.degrees(rotation)
+                    }
+                })
+            }
             for (let i = 0; i < nN; i++) {
-                const newPage = outputPdf.addPage([nw, nh]);
                 const indices = indicesFunc(i);
-                const transforms = transformFunc(i);
-
-                for (let j = 0; j < indices.length; j++) {
-                    let page = getPage(indices[j]);
-
-                    if (reduceGaps && page) {
-                        const [x0,x1,y0,y1] = await getTextArea(inputPdfBytes, indices[j]);
-                        page = await cropPdfPage(page, x0, x1, y0, y1);
+                const trans = transform(i);
+                const pages = await Promise.all(indices.map(async j=>{
+                    let p = getPage(j);
+                    if (reduceGaps && p) {
+                        const [x0,x1,y0,y1] = await getTextArea(inputPdfBytes, j);
+                        p = await cropPdfPage(p, x0, x1, y0, y1);
                     }
-
-                    if (page) {
-                        const { rotation, subwidth, subheight, offsetX, offsetY } = transforms[j];
-                        const embeddedPage = await outputPdf.embedPage(page);
-                        newPage.drawPage(embeddedPage, {
-                            x: offsetX * nw,
-                            y: offsetY * nh,
-                            width: subwidth,
-                            height: subheight,
-                            rotate: PDFLib.degrees(rotation)
-                        });
-                    }
+                    return p;
+                }));
+                let newPage = await collage([nw, nh], pages, trans);
+                if (reduceGaps){
+                    const margin=5;
+                    newPage = await collage([nw, nh],[newPage], [{
+                        x: margin,
+                        y: margin,
+                        width: nw - margin * 2,
+                        height: nh - margin * 2,
+                    }])
                 }
+                addPage(outputPdf, newPage);
                 const progress = Math.floor((i+1)/nN*100);
                 document.getElementById('progressBar').value = progress;
                 document.getElementById('progressContainer').style.display = 'block';
@@ -459,7 +494,7 @@
                     document.body.appendChild(link);
                     link.click();
                     document.body.removeChild(link);
-                    
+
                     // Clean up the URL object
                     URL.revokeObjectURL(url);
                     document.getElementById('progressContainer').style.display = 'none';
