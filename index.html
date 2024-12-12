@@ -310,7 +310,7 @@
 
         async function getTextArea(pdfBytes,i) {
             const {data, canvaswidth, canvasheight, pageWidth, pageHeight} = await getImageData(pdfBytes,i);
-            const findRange=l=>{const m=Math.max.apply(null, l); l.forEach((x,i)=>{l[i]=x/m;});return[(l.findIndex(x=>x>0.05)-0.5)/l.length,(l.findLastIndex(x=>x>0.05)+1+0.5)/l.length]};
+            const findRange=l=>{const m=Math.max.apply(null, l); l.forEach((x,i)=>{l[i]=x/m;});return[(l.findIndex(x=>x>0.1)-0.4)/l.length,(l.findLastIndex(x=>x>0.1)+1+0.4)/l.length]};
 
             const rowSum = new Array(canvasheight).fill(0);
             for (let hi = 0; hi < canvasheight; hi += 1) {
@@ -357,6 +357,15 @@
                 width: width, // Keep the original width
                 height: height // Keep the original height
             }]);
+        }
+        async function addMargin(page, margin){
+            const {width, height} = page.getSize();
+            return collage([width, height],[page], [{
+                x: margin,
+                y: margin,
+                width: width-margin*2,
+                height: height-margin*2,
+            }])
         }
 
         async function bookscale(inputPdfBytes, shrink = 2, isBook = true, reduceGaps = false) {
@@ -448,13 +457,7 @@
                 }));
                 let newPage = await collage([nw, nh], pages, trans);
                 if (reduceGaps){
-                    const margin=5;
-                    newPage = await collage([nw, nh],[newPage], [{
-                        x: margin,
-                        y: margin,
-                        width: nw - margin * 2,
-                        height: nh - margin * 2,
-                    }])
+                    newPage = await addMargin(newPage, 5)
                 }
                 addPage(outputPdf, newPage);
                 const progress = Math.floor((i+1)/nN*100);
