@@ -354,6 +354,7 @@
             if (!page) return null;
             const { width, height } = page.getSize();
             const k = Math.max((x1-x0)/width, (y1-y0)/height);
+            if(k===1) return page;
             return collage([width*k, height*k], [page], [{
                 x: (width*k-(x1-x0))/(width-(x1-x0))*x0-x0, // Negative to shift the content left
                 y: (height*k-(y1-y0))/(height-(y1-y0))*y0-y0, // Negative to shift the content down
