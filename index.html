@@ -480,7 +480,7 @@
                     // Create a temporary link and trigger download
                     const link = document.createElement('a');
                     link.href = url;
-                    link.download = `processed-${file.name}`;
+                    link.download = `paper${isBook?'B':'S'}${shrinkFactor}-${file.name}`;
                     document.body.appendChild(link);
                     link.click();
                     document.body.removeChild(link);
